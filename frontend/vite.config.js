@@ -6,8 +6,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/answer": "http://localhost:3000",
-      "/trace": "http://localhost:3000",
+      "/answer": "http://localhost:8000",
+      "/trace": "http://localhost:8000",
+      "/health": "http://localhost:8000",
     },
   },
 });

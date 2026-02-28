@@ -6,9 +6,12 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node src/server.js",
-    "start": "NODE_ENV=production node src/server.js"
+    "start": "NODE_ENV=production node src/server.js",
+    "export-releasetrain": "node scripts/export-releasetrain-for-airbyte.js",
+    "ingest-releasetrain": "NODE_INGEST=1 node scripts/export-releasetrain-for-airbyte.js"
   },
   "dependencies": {
+    "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1"

@@ -15,6 +15,10 @@ class Trace:
             "question": self.question,
             "steps": self.steps,
             "final_response": self.final_response,
+            "data_status": {
+                "last_refresh": "Unknown",
+                "sources": ["Releasetrain components", "Reddit (planned)"],
+            },
         }
 
 

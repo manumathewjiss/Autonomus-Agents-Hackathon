@@ -15,7 +15,6 @@ const STATUS_COLORS = {
 
 export function ReleaseNotesApp() {
   const [darkMode, setDarkMode] = useState(true);
-  const [activeTab, setActiveTab] = useState("chat"); // "chat" | "graph"
 
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,14 +23,8 @@ export function ReleaseNotesApp() {
   const [answer, setAnswer] = useState("");
   const [status, setStatus] = useState("idle"); // "idle" | "answer" | "abstain" | "error"
   const [meta, setMeta] = useState({ vendor: "", version: "", source: "" });
-  const [coreEvidence, setCoreEvidence] = useState([]);
-  const [extraEvidence, setExtraEvidence] = useState([]);
   const [traceJson, setTraceJson] = useState("");
   const [debugOpen, setDebugOpen] = useState(false);
-  const [dataStatus, setDataStatus] = useState({
-    lastRefresh: null,
-    sources: []
-  });
 
   const handleSuggestionClick = (text) => {
     setQuery(text);
@@ -46,52 +39,51 @@ export function ReleaseNotesApp() {
     setStatus("idle");
 
     try {
-      const [answerRes, traceRes] = await Promise.allSettled([
-        fetch("/answer", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: trimmed })
-        }),
-        fetch("/trace", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: trimmed })
-        })
-      ]);
+      const answerRes = await fetch("/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: trimmed })
+      });
 
-      if (answerRes.status === "fulfilled" && answerRes.value.ok) {
-        const data = await answerRes.value.json();
+      if (answerRes.ok) {
+        const data = await answerRes.json();
 
         setAnswer(data.answer ?? "");
-        setStatus(data.status === "abstain" ? "abstain" : "answer");
+        setStatus(
+          data.status === "abstain"
+            ? "abstain"
+            : data.status === "error"
+            ? "error"
+            : "answer"
+        );
+        if (data.status === "error") {
+          setError(data.answer ?? "Backend returned an error.");
+        } else {
+          setError("");
+        }
         setMeta({
           vendor: data.vendor ?? "Unknown vendor",
-          version: data.version ?? "N/A",
+          version: data.version ?? data.verified_version ?? "N/A",
           source: data.source ?? "Release Hub"
         });
-        setCoreEvidence(data.coreEvidence ?? []);
-        setExtraEvidence(data.extraEvidence ?? []);
+        // Fetch trace by query_id from answer response
+        const queryId = data.query_id;
+        if (queryId) {
+          const traceRes = await fetch(`/trace/${queryId}`);
+          if (traceRes.ok) {
+            const traceData = await traceRes.json();
+            setTraceJson(JSON.stringify(traceData, null, 2));
+          } else {
+            setTraceJson("");
+          }
+        } else {
+          setTraceJson("");
+        }
       } else {
         setStatus("error");
         setAnswer("");
         setMeta({ vendor: "", version: "", source: "" });
-        setCoreEvidence([]);
-        setExtraEvidence([]);
         setError("Failed to fetch answer from /answer. Check backend.");
-      }
-
-      if (traceRes.status === "fulfilled" && traceRes.value.ok) {
-        const traceData = await traceRes.value.json();
-        setTraceJson(JSON.stringify(traceData, null, 2));
-
-        const ds = traceData.dataStatus || traceData.data_status;
-        if (ds) {
-          setDataStatus({
-            lastRefresh: ds.lastRefresh ?? ds.last_refresh ?? null,
-            sources: Array.isArray(ds.sources) ? ds.sources : []
-          });
-        }
-      } else {
         setTraceJson("");
       }
     } catch (e) {
@@ -99,8 +91,6 @@ export function ReleaseNotesApp() {
       setError("Unexpected error contacting backend.");
       setAnswer("");
       setMeta({ vendor: "", version: "", source: "" });
-      setCoreEvidence([]);
-      setExtraEvidence([]);
     } finally {
       setLoading(false);
       setDebugOpen(true);
@@ -147,21 +137,6 @@ export function ReleaseNotesApp() {
         </div>
 
         <div className="rn-hero-header-actions">
-          <div className="rn-tab-group">
-            <button
-              className={`rn-tab ${activeTab === "chat" ? "rn-tab-active" : ""}`}
-              onClick={() => setActiveTab("chat")}
-            >
-              Chat
-            </button>
-            <button
-              className={`rn-tab ${activeTab === "graph" ? "rn-tab-active" : ""}`}
-              onClick={() => setActiveTab("graph")}
-            >
-              Neo4j Graph
-            </button>
-          </div>
-
           <div className="rn-hero-header-actions-right">
             <div className="rn-toggle-group">
               <button
@@ -187,9 +162,8 @@ export function ReleaseNotesApp() {
       </header>
 
       <main className="rn-hero-main">
-        {activeTab === "chat" ? (
-          <div className="rn-chat-layout">
-            <section className="rn-chat-column">
+        <div className="rn-chat-layout">
+          <section className="rn-chat-column">
               <div className="rn-chat-card">
                 <div className="rn-chat-header">
                   <div className="rn-env-pill">Prod · EU-West</div>
@@ -242,23 +216,13 @@ export function ReleaseNotesApp() {
             </section>
 
             <section className="rn-side-column">
-              <DataStatus dataStatus={dataStatus} loading={loading} />
-              <EvidencePanel
-                coreEvidence={coreEvidence}
-                extraEvidence={extraEvidence}
-                loading={loading}
-              />
-
               <DebugPanel
                 open={debugOpen}
                 onToggle={() => setDebugOpen((o) => !o)}
                 traceJson={traceJson}
               />
             </section>
-          </div>
-        ) : (
-          <GraphTab />
-        )}
+        </div>
       </main>
     </div>
   );
@@ -304,102 +268,11 @@ function AnswerCard({ answer, meta, status, loading, error }) {
 
         {status === "abstain" && !loading && !error && (
           <p className="rn-abstain-note">
-            The system abstained because it could not find enough trustworthy,
-            vendor‑verified evidence to answer safely.
+            The system abstained because it could not find enough trustworthy
+            data to answer safely.
           </p>
         )}
       </div>
-    </div>
-  );
-}
-
-function DataStatus({ dataStatus, loading }) {
-  const hasSources = dataStatus?.sources && dataStatus.sources.length > 0;
-
-  return (
-    <div className="rn-data-status">
-      <div className="rn-section-header">
-        <span>Data status</span>
-        <span className="rn-section-pill-soft">Lake</span>
-      </div>
-
-      {loading && <div className="rn-skeleton-block rn-skeleton-compact" />}
-
-      {!loading && (
-        <div className="rn-data-status-body">
-          <div className="rn-data-status-row">
-            <span className="rn-data-status-label">Last lake refresh</span>
-            <span className="rn-data-status-value">
-              {dataStatus?.lastRefresh || "Unknown"}
-            </span>
-          </div>
-          <div className="rn-data-status-row">
-            <span className="rn-data-status-label">Sources</span>
-            <span className="rn-data-status-value">
-              {hasSources
-                ? dataStatus.sources.join(", ")
-                : "Releasetrain components, Reddit (planned)"}
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EvidencePanel({ coreEvidence, extraEvidence, loading }) {
-  const hasAny =
-    (coreEvidence && coreEvidence.length > 0) ||
-    (extraEvidence && extraEvidence.length > 0);
-
-  return (
-    <div className="rn-evidence-panel">
-      <div className="rn-section-header">
-        <span>Evidence</span>
-        <span className="rn-evidence-badge">Model‑visible</span>
-      </div>
-
-      {loading && (
-        <div className="rn-skeleton-block" />
-      )}
-
-      {!loading && !hasAny && (
-        <p className="rn-evidence-placeholder">
-          When you ask a question, core evidence from{" "}
-          <span className="rn-inline-pill">Releasetrain</span> and extra
-          context from <span className="rn-inline-pill">Tavily</span> will show
-          up here.
-        </p>
-      )}
-
-      {!loading && hasAny && (
-        <div className="rn-evidence-columns">
-          <EvidenceColumn
-            title="Core evidence (Releasetrain)"
-            items={coreEvidence}
-          />
-          <EvidenceColumn
-            title="Extra evidence (Tavily)"
-            items={extraEvidence}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EvidenceColumn({ title, items }) {
-  if (!items || items.length === 0) return null;
-  return (
-    <div className="rn-evidence-column">
-      <div className="rn-evidence-title">{title}</div>
-      <ul className="rn-evidence-list">
-        {items.map((item, idx) => (
-          <li key={idx}>
-            {typeof item === "string" ? item : JSON.stringify(item)}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -419,33 +292,11 @@ function DebugPanel({ open, onToggle, traceJson }) {
           ) : (
             <p className="rn-debug-placeholder">
               Call `/trace` on the backend and return JSON here to see the full
-              routing and evidence chain.
+              agent trace.
             </p>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function GraphTab() {
-  return (
-    <div className="rn-graph-tab">
-      <div className="rn-section-header">
-        <span>Neo4j graph</span>
-        <span className="rn-section-pill-soft">Topology view</span>
-      </div>
-      <p className="rn-graph-description">
-        This tab is designed to embed a Neo4j graph of vendors, releases, and
-        CVEs. You can either:
-      </p>
-      <ul className="rn-graph-options">
-        <li>Embed a Neo4j Browser / Bloom view in an iframe, or</li>
-        <li>Render a PNG/SVG from your graph (e.g. from Far/Manu) here.</li>
-      </ul>
-      <div className="rn-graph-placeholder">
-        <span>Neo4j graph placeholder</span>
-      </div>
     </div>
   );
 }

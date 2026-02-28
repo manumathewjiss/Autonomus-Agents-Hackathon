@@ -134,10 +134,11 @@ export async function getFactOnDate(vendor, date) {
   const cached = await cache.get(cacheKey);
   if (cached) return cached;
 
+  // Match both YYYYMMDD and YYYY-MM-DD (ingest may store either)
   const res = await pool.query(
     `SELECT data FROM releases
      WHERE (LOWER(version_product_name) = LOWER($1) OR LOWER(version_product_brand) = LOWER($1))
-       AND version_release_date = $2
+       AND (REPLACE(REPLACE(version_release_date, '-', ''), ' ', '') = $2 OR version_release_date = $2)
      ORDER BY version_timestamp_last_update DESC NULLS LAST
      LIMIT 1`,
     [vendor.trim(), dateNorm]
@@ -150,11 +151,12 @@ export async function getFactOnDate(vendor, date) {
 
 /**
  * Helper to transform a record into the response shape.
+ * Version output is taken from versionSearchTags: slice to the last value only (e.g. ["linux","patch","20260214","1.2.3"] → "1.2.3").
  */
 export function buildAnswerPayload(record) {
   if (!record) return null;
   const tags = Array.isArray(record.versionSearchTags) ? record.versionSearchTags : [];
-  const mainData = tags.length ? tags[tags.length - 1] : record.versionNumber || null;
+  const mainData = tags.length > 0 ? tags.slice(-1)[0] : (record.versionNumber || null);
 
   return {
     mainData,

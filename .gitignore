@@ -5,6 +5,7 @@ dist
 .DS_Store
 .env
 .envrc
+data/
 .venv
 env/
 venv/

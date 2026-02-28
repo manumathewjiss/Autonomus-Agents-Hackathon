@@ -21,10 +21,10 @@ async def compose_from_verification(
     if not verification.verified_version:
         return "I don't know from the current evidence (no verified version)."
 
+    # For patch-on-date (e.g. "What is the patch for Linux on 2026-02-14?"): output only the slice value (e.g. "1.2.3")
+    if verification.date:
+        return verification.verified_version
+
     vendor_part = f" for {verification.vendor}" if verification.vendor else ""
-    date_part = f" on {verification.date}" if verification.date else ""
-    return (
-        f"The latest verified version{vendor_part}{date_part} is "
-        f"{verification.verified_version}."
-    )
+    return f"The latest verified version{vendor_part} is {verification.verified_version}."
 

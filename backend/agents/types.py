@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 
 class RouterResult(BaseModel):
-    type: Literal["latest_version", "version_on_date", "unknown"] = "latest_version"
+    type: Literal["latest_version", "version_on_date", "unknown", "patch"] = "patch"
     vendor_hint: Optional[str] = None
     date_hint: Optional[str] = None
     raw_llm_output: Dict[str, Any] = {}

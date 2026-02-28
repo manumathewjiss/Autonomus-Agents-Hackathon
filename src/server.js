@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import {
   ingestMany,
@@ -21,16 +22,67 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+/** Set to 1 to log Releasetrain fetch URL and record counts (debug). */
+const DEBUG_RELEASETRAIN = process.env.DEBUG_RELEASETRAIN === '1';
+
+/**
+ * Lazy-load Releasetrain data for a vendor when DB has no record.
+ * Releasetrain API has the records; we fetch and ingest so /facts/latest can return them.
+ * Supports any vendor (linux, android, etc.) via search API.
+ */
+async function ensureDataForVendor(vendor) {
+  const v = (vendor || '').toLowerCase().trim();
+  if (!v) return;
+  const url = `https://releasetrain.io/api/v/search?q=${encodeURIComponent(v)}&channel=patch&limit=25&page=1`;
+  if (DEBUG_RELEASETRAIN) {
+    console.log('[Releasetrain] Fetching:', url);
+  }
+  try {
+    const resp = await fetch(url);
+    if (DEBUG_RELEASETRAIN) {
+      console.log('[Releasetrain] Response status:', resp.status, 'for vendor:', v);
+    }
+    if (!resp.ok) return;
+    const json = await resp.json();
+    // API returns { data: [...] }; fallback if it returns array directly
+    const records = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : []);
+    if (DEBUG_RELEASETRAIN) {
+      console.log('[Releasetrain] Records received:', records.length, 'for vendor:', v);
+    }
+    if (records.length > 0) {
+      await ingestMany(records);
+      if (DEBUG_RELEASETRAIN) {
+        console.log('[Releasetrain] Ingested', records.length, 'records for vendor:', v);
+      }
+    }
+  } catch (err) {
+    if (DEBUG_RELEASETRAIN) {
+      console.error('[Releasetrain] Error for vendor', v, err);
+    }
+  }
+}
+
 /**
  * GET /facts/latest?vendor=<from_user>
  * vendor comes from user input query, passed by backend.
+ * If no record found, tries to lazy-load from Releasetrain for known vendors (e.g. linux), then retries.
  */
 app.get('/facts/latest', async (req, res) => {
   const vendor = req.query.vendor;
   if (!vendor) {
     return res.status(400).json({ error: 'query param vendor is required' });
   }
-  const record = await getLatestFact(vendor);
+  if (DEBUG_RELEASETRAIN) {
+    console.log('[Releasetrain] /facts/latest?vendor=' + vendor);
+  }
+  let record = await getLatestFact(vendor);
+  if (!record) {
+    if (DEBUG_RELEASETRAIN) {
+      console.log('[Releasetrain] No DB record; lazy-loading for vendor:', vendor);
+    }
+    await ensureDataForVendor(vendor);
+    record = await getLatestFact(vendor);
+  }
   const payload = buildAnswerPayload(record);
   if (!payload) {
     return res.status(404).json({ error: 'No matching release found' });
@@ -52,7 +104,17 @@ app.get('/facts/on-date', async (req, res) => {
   if (!date) {
     return res.status(400).json({ error: 'query param date is required (YYYY-MM-DD)' });
   }
-  const record = await getFactOnDate(vendor, date);
+  if (DEBUG_RELEASETRAIN) {
+    console.log('[Releasetrain] /facts/on-date?vendor=' + vendor + '&date=' + date);
+  }
+  let record = await getFactOnDate(vendor, date);
+  if (!record) {
+    if (DEBUG_RELEASETRAIN) {
+      console.log('[Releasetrain] No DB record for date; lazy-loading for vendor:', vendor);
+    }
+    await ensureDataForVendor(vendor);
+    record = await getFactOnDate(vendor, date);
+  }
   const payload = buildAnswerPayload(record);
   if (!payload) {
     return res.status(404).json({ error: 'No matching release found for that vendor and date' });
